@@ -18,8 +18,11 @@ class SSEClient {
   /// [method] is the request method (GET or POST).
   /// [url] is the URL of the SSE endpoint.
   /// [header] is a map of request headers.
+  /// [streamController] is required to persist the stream from the old connection.
+  /// [config] is required to persist the configuration and decrease `tryCount`.
   /// [body] is an optional request body for POST requests.
-  /// [streamController] is required to persist the stream from the old connection
+  /// 
+  /// Returns a [RetryConfiguration] with decreased try count
   static RetryConfiguration _retryConnection(
       {required SSERequestType method,
       required String url,
@@ -29,15 +32,21 @@ class SSEClient {
       Map<String, dynamic>? body}) {
     print('---RETRY CONNECTION---');
     if (config.infinite || (config.tryCount ?? 0) > 0) {
-      Future.delayed(Duration(seconds: 5), () {
-        subscribeToSSE(
-          method: method,
-          url: url,
-          header: header,
-          body: body,
-          oldStreamController: streamController,
-        );
-      });
+      Future.delayed(
+        Duration(
+          milliseconds:
+              config.reconnectTime ?? DEFAULT_RECONNECT_TIME,
+        ),
+        () {
+          subscribeToSSE(
+            method: method,
+            url: url,
+            header: header,
+            body: body,
+            oldStreamController: streamController,
+          );
+        },
+      );
       return config.use();
     } else {
       return config;
@@ -129,6 +138,12 @@ class SSEClient {
                     currentSSEModel.id = value;
                     break;
                   case 'retry':
+                    try {
+                      final reconnectTime = int.parse(value);
+                      retryConfig.updateReconnectTime(reconnectTime);
+                    } catch (e) {
+                      print("Ignore retry. Invalid number: $value");
+                    }
                     break;
                   default:
                     print('---ERROR---');
@@ -178,7 +193,7 @@ class SSEClient {
         );
       } finally {
         if (retryConfig.tryCount == 0) {
-          return Stream.error('rety exceeded');
+          return Stream.error('retry exceeded');
         }
       }
       return streamController.stream;
